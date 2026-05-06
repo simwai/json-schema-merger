@@ -1,0 +1,19 @@
+{
+  "name": "json-schema-merger",
+  "version": "0.1.0",
+  "description": "POC: Draft 2020-12 local JSON Schema merger with explicit fail-fast on advanced keywords",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "knip"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0",
+    "knip": "^5.21.2"
+  }
+}
