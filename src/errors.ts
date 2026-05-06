@@ -1,8 +1,9 @@
 export class UnsupportedKeywordError extends Error {
-  constructor(keyword: string) {
+  constructor(paths: string[]) {
     super(
-      `Keyword "${keyword}" requires evaluation-state or reference resolution and is not supported by this POC merger. ` +
-      `Remove it or handle it manually before merging.`
+      `The following keywords require evaluation-state or reference resolution ` +
+      `and cannot be safely merged by this POC:\n  ${paths.join('\n  ')}\n` +
+      `Remove them or handle them manually before merging.`
     )
     this.name = 'UnsupportedKeywordError'
   }
@@ -11,7 +12,7 @@ export class UnsupportedKeywordError extends Error {
 export class DraftMismatchError extends Error {
   constructor(a: string | undefined, b: string | undefined) {
     super(
-      `Both schemas must declare the same $schema draft. ` +
+      `Both schemas must declare the same $schema. ` +
       `Got "${a ?? '(none)'}" and "${b ?? '(none)'}".`
     )
     this.name = 'DraftMismatchError'
@@ -22,8 +23,10 @@ export class UnsupportedDraftError extends Error {
   constructor(draft: string | undefined) {
     super(
       `Unsupported draft "${draft ?? '(none)'}". ` +
-      `Only "https://json-schema.org/draft/2020-12/schema" is supported.`
+      `Only "${SUPPORTED_DRAFT}" is supported.`
     )
     this.name = 'UnsupportedDraftError'
   }
 }
+
+import { SUPPORTED_DRAFT } from './types.js'

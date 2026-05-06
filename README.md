@@ -1,30 +1,38 @@
 # json-schema-merger
 
-POC: Draft 2020-12 local JSON Schema merger.
+POC: Draft 2020-12 local JSON Schema merger with **runtime meta-schema keyword discovery**.
 
-## What it does
+## How it works
 
-Merges two or more JSON Schema objects (Draft 2020-12, local, in-memory) using a set of keyword-family rules:
+On the first `merge()` call, the library fetches the declared `$schema` URI (e.g. the Draft 2020-12 meta-schema) via `got` and reads its `properties` to classify each keyword's shape. That shape drives the default merge strategy. The result is cached for the lifetime of the process — no repeated network calls.
 
-| Keyword family | Examples | Strategy |
-|---|---|---|
-| Array-union | `type`, `required`, `enum`, `examples` | Union + dedupe |
-| Object-map | `properties`, `patternProperties`, `$defs` | Recurse per child key |
-| Lower bound | `minimum`, `minLength`, `minItems`, `minProperties`, `minContains` | Keep stricter (larger) |
-| Upper bound | `maximum`, `maxLength`, `maxItems`, `maxProperties`, `maxContains` | Keep stricter (smaller) |
-| Annotation scalar | `title`, `description`, `default` | Last-writer-wins |
-| Everything else | `additionalProperties`, `prefixItems`, `items`, ... | Last-writer-wins |
+A small override map handles the keywords where shape alone is not enough (numeric bounds, fail-fast advanced keywords).
 
-## What it does NOT do
+```
+$schema URI
+    │
+    ▼
+ got(uri) → metaSchema.properties
+    │
+    ▼
+ classifyShape(definition) → KeywordShape
+    │
+    ▼
+ getStrategy(key, keywordMap)
+    │
+    ├── shape = 'array'   → append-array  (union + dedupe)
+    ├── shape = 'object'  → merge-object  (recurse per child key)
+    ├── override min*     → max-number    (stricter lower bound)
+    ├── override max*     → min-number    (stricter upper bound)
+    ├── override $ref etc → fail-fast     (throws immediately)
+    └── everything else   → overwrite     (last-writer-wins)
+```
 
-These keywords throw `UnsupportedKeywordError` immediately:
+## Unsupported keywords (fail-fast)
 
-- `$ref`, `$dynamicRef`, `$dynamicAnchor` — require reference resolution
-- `unevaluatedProperties`, `unevaluatedItems` — require evaluation-state tracking
-- `if`, `then`, `else`, `not` — require semantic/conditional evaluation
-- `$anchor` — requires scope-aware reference resolution
+These throw `UnsupportedKeywordError` immediately because they require evaluation-state tracking or reference resolution:
 
-Only `https://json-schema.org/draft/2020-12/schema` is supported. Both schemas must declare the same `$schema`. External documents, remote refs, and cross-resource `$id` scopes are out of scope for this POC.
+`$ref` · `$dynamicRef` · `$dynamicAnchor` · `$anchor` · `unevaluatedProperties` · `unevaluatedItems` · `if` · `then` · `else` · `not`
 
 ## Install
 
@@ -37,7 +45,7 @@ pnpm install
 ```ts
 import { merge } from './src/index.js'
 
-const result = merge(
+const result = await merge(
   {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: 'object',
@@ -53,15 +61,15 @@ const result = merge(
     properties: { name: { type: 'string' } },
   }
 )
-
-console.log(JSON.stringify(result, null, 2))
-// type: ['object', 'null'] (deduped union)
-// required: ['id', 'name'] (deduped union)
-// minProperties: 2 (stricter lower bound)
-// properties: { id: ..., name: ... } (recursively merged)
+// type: ['object', 'null']   — deduped union (shape: array)
+// required: ['id', 'name']   — deduped union (shape: array)
+// minProperties: 2           — stricter lower bound (override)
+// properties: { id, name }   — recursively merged (shape: object)
 ```
 
 ## Test
+
+Tests pre-seed the keyword map via `seedKeywordMap()` so no network calls are needed:
 
 ```bash
 pnpm test
@@ -69,7 +77,7 @@ pnpm test
 
 ## Roadmap
 
-- [ ] `$ref` local resolution (same-document `#/$defs/...`)
-- [ ] `if`/`then`/`else` policy (wrap in `allOf` instead of merging)
+- [ ] Local `$ref` resolution (`#/$defs/...` within the same document)
+- [ ] `if`/`then`/`else` — wrap both sides in `allOf` instead of merging
 - [ ] `unevaluatedProperties` tracking
 - [ ] Multi-draft support (Draft 7, Draft 2019-09)
