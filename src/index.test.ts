@@ -8,30 +8,15 @@ import {
   seedKeywordMap,
 } from './index.js'
 import type { KeywordShape } from './types.js'
+import fixtureKeywords from './__fixtures__/draft-2020-12-keywords.json' assert { type: 'json' }
 
-// Pre-seed the keyword map so tests never hit the network.
-const KEYWORD_FIXTURES: Record<string, KeywordShape> = {
-  type: 'array',
-  required: 'array',
-  enum: 'array',
-  examples: 'array',
-  properties: 'object',
-  patternProperties: 'object',
-  $defs: 'object',
-  title: 'string',
-  description: 'string',
-  default: 'unknown',
-  minLength: 'number',
-  maxLength: 'number',
-  minItems: 'number',
-  maxItems: 'number',
-  minProperties: 'number',
-  maxProperties: 'number',
-  additionalProperties: 'unknown',
-}
-
+// Pre-seed the keyword map from the generated fixture file.
+// Same source as production — no fixture drift possible.
 beforeAll(() => {
-  seedKeywordMap(SUPPORTED_DRAFT, new Map(Object.entries(KEYWORD_FIXTURES)))
+  seedKeywordMap(
+    SUPPORTED_DRAFT,
+    new Map(Object.entries(fixtureKeywords) as [string, KeywordShape][])
+  )
 })
 
 function schema(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -173,6 +158,16 @@ describe('merge()', () => {
         Foo: { type: 'string' },
         Bar: { type: 'number' },
       })
+    })
+  })
+
+  describe('allOf / anyOf / oneOf', () => {
+    it('should union allOf arrays', async () => {
+      const result = await merge(
+        schema({ allOf: [{ type: 'object' }] }),
+        schema({ allOf: [{ required: ['id'] }] })
+      )
+      expect(result['allOf']).toEqual([{ type: 'object' }, { required: ['id'] }])
     })
   })
 
