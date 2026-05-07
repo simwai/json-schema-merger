@@ -2,10 +2,30 @@ import type { KeywordMap } from './meta-schema.js'
 import type { KeywordShape, MergeStrategy } from './types.js'
 
 /**
- * Keywords whose merge semantics cannot be inferred from their shape alone.
- * These override the shape-based default.
+ * Keywords whose merge semantics cannot be inferred from their shape alone,
+ * OR where shape-based inference is unreliable (e.g. the meta-schema uses
+ * anyOf/oneOf branches that the classifier resolves to 'unknown').
+ * These always override shape-based defaults.
  */
 const _overrides = new Map<string, MergeStrategy>([
+  // Polymorphic — fixture shape is reliable but we pin it defensively.
+  ['type', 'append-array'],
+
+  // Object maps that must be merged key-by-key.
+  ['properties', 'merge-object'],
+  ['$defs', 'merge-object'],
+  ['patternProperties', 'merge-object'],
+  ['dependentRequired', 'merge-object'],
+
+  // Composition arrays — union all entries.
+  ['allOf', 'append-array'],
+  ['anyOf', 'append-array'],
+  ['oneOf', 'append-array'],
+  ['prefixItems', 'append-array'],
+  ['enum', 'append-array'],
+  ['examples', 'append-array'],
+  ['required', 'append-array'],
+
   // Numeric lower bounds — keep stricter (larger) value.
   ['minimum', 'max-number'],
   ['exclusiveMinimum', 'max-number'],
@@ -23,15 +43,11 @@ const _overrides = new Map<string, MergeStrategy>([
   ['maxContains', 'min-number'],
 
   // Require evaluation-state or reference resolution — fail immediately.
-  ['$ref', 'fail-fast'],
   ['$dynamicRef', 'fail-fast'],
   ['$dynamicAnchor', 'fail-fast'],
   ['$anchor', 'fail-fast'],
   ['unevaluatedProperties', 'fail-fast'],
   ['unevaluatedItems', 'fail-fast'],
-  ['if', 'fail-fast'],
-  ['then', 'fail-fast'],
-  ['else', 'fail-fast'],
   ['not', 'fail-fast'],
 ])
 
