@@ -1,82 +1,85 @@
-import { Type, type Static, type TObject, type TSchema } from '@sinclair/typebox'
+import { Type, type Static, type TObject } from '@sinclair/typebox'
 import { TypeCompiler, type TypeCheck } from '@sinclair/typebox/compiler'
+import {
+  arrayUnionKeywords,
+  failFastKeywords,
+  lowerBoundKeywords,
+  objectMapKeywords,
+  upperBoundKeywords,
+} from './strategy.js'
 import type { Schema } from './types.js'
 
-// ── Reusable leaf types ───────────────────────────────────────────────────────
+// ── Leaf types ────────────────────────────────────────────────────────────────
 
 const JsonPrimitive = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()])
 
-// JsonValue is self-referential — TypeBox handles this via Type.Recursive
 const JsonValue = Type.Recursive((Self) =>
   Type.Union([JsonPrimitive, Type.Array(Self), Type.Record(Type.String(), Self)])
 )
 
-// ── Core JSON Schema keyword shapes ──────────────────────────────────────────
+const AnyObject = Type.Record(Type.String(), JsonValue)
 
-const SchemaType = Type.Union([
-  Type.String(),
-  Type.Array(Type.String()),
-])
+// ── Build shape from strategy keyword lists ───────────────────────────────────────
+// Each keyword's TypeBox type is derived directly from its MergeStrategy so
+// validator.ts never diverges from strategy.ts.
 
-const SchemaProperties = Type.Record(
-  Type.String(),
-  Type.Record(Type.String(), JsonValue)
+function optionalEntries<T extends TObject['properties'][string]>(
+  keys: ReadonlyArray<string>,
+  make: () => T
+): Record<string, ReturnType<typeof Type.Optional<T>>> {
+  return Object.fromEntries(keys.map((k) => [k, Type.Optional(make())]))
+}
+
+const lowerBoundProps  = optionalEntries(lowerBoundKeywords,  () => Type.Number())
+const upperBoundProps  = optionalEntries(upperBoundKeywords,  () => Type.Number())
+const objectMapProps   = optionalEntries(objectMapKeywords,   () => Type.Record(Type.String(), AnyObject))
+const arrayUnionProps  = optionalEntries(arrayUnionKeywords,  () => Type.Array(JsonValue))
+// fail-fast keywords are rejected at runtime by preflight — omit from the
+// validator shape so they can never appear in a valid merged result.
+void failFastKeywords
+
+// ── Annotations & core (not in strategy lists, always overwrite) ──────────────
+
+const coreProps = {
+  $schema:     Type.Optional(Type.String()),
+  title:       Type.Optional(Type.String()),
+  description: Type.Optional(Type.String()),
+  $id:         Type.Optional(Type.String()),
+  $comment:    Type.Optional(Type.String()),
+  $ref:        Type.Optional(Type.String()),
+  const:       Type.Optional(JsonValue),
+  default:     Type.Optional(JsonValue),
+  deprecated:  Type.Optional(Type.Boolean()),
+  readOnly:    Type.Optional(Type.Boolean()),
+  writeOnly:   Type.Optional(Type.Boolean()),
+}
+
+// ── Final merged schema shape ───────────────────────────────────────────────
+
+export const MergedSchemaShape = Type.Object(
+  {
+    ...coreProps,
+    ...lowerBoundProps,
+    ...upperBoundProps,
+    ...objectMapProps,
+    ...arrayUnionProps,
+  },
+  { additionalProperties: true }
 )
-
-const SchemaDefs = Type.Record(
-  Type.String(),
-  Type.Record(Type.String(), JsonValue)
-)
-
-// ── The merged schema shape ───────────────────────────────────────────────────
-// Covers the keywords your merger actually touches (merger.ts / strategy.ts).
-// All fields are optional because not every merge result will contain all of them.
-
-export const MergedSchemaShape = Type.Object({
-  $schema:      Type.Optional(Type.String()),
-  type:         Type.Optional(SchemaType),
-  title:        Type.Optional(Type.String()),
-  description:  Type.Optional(Type.String()),
-
-  // Validation — numeric bounds
-  minimum:      Type.Optional(Type.Number()),
-  maximum:      Type.Optional(Type.Number()),
-  minLength:    Type.Optional(Type.Number()),
-  maxLength:    Type.Optional(Type.Number()),
-  minItems:     Type.Optional(Type.Number()),
-  maxItems:     Type.Optional(Type.Number()),
-  minProperties: Type.Optional(Type.Number()),
-  maxProperties: Type.Optional(Type.Number()),
-
-  // Structural
-  required:    Type.Optional(Type.Array(Type.String())),
-  properties:  Type.Optional(SchemaProperties),
-  enum:        Type.Optional(Type.Array(JsonValue)),
-
-  // Composition
-  allOf: Type.Optional(Type.Array(Type.Record(Type.String(), JsonValue))),
-  anyOf: Type.Optional(Type.Array(Type.Record(Type.String(), JsonValue))),
-  oneOf: Type.Optional(Type.Array(Type.Record(Type.String(), JsonValue))),
-
-  // Definitions (both draft styles)
-  $defs:       Type.Optional(SchemaDefs),
-  definitions: Type.Optional(SchemaDefs),
-}, { additionalProperties: true })
 
 export type MergedSchema = Static<typeof MergedSchemaShape>
 
-// ── Pre-compiled validator (fast path) ───────────────────────────────────────
+// ── Pre-compiled validator ───────────────────────────────────────────────────
 
 const _check: TypeCheck<typeof MergedSchemaShape> = TypeCompiler.Compile(MergedSchemaShape)
 
 /**
- * Validates that a raw `Schema` (the output of `merge()`) matches the expected
- * merged-schema shape. Narrows the return type to `MergedSchema` on success.
+ * Type guard. Narrows `Schema` → `MergedSchema` on success.
  *
  * @example
  * const result = await merge(a, b)
  * if (validateMerged(result)) {
- *   result.required // string[] | undefined  ✅
+ *   result.required // string[] | undefined ✅
  * }
  */
 export function validateMerged(schema: Schema): schema is MergedSchema {
@@ -84,9 +87,8 @@ export function validateMerged(schema: Schema): schema is MergedSchema {
 }
 
 /**
- * Same as `validateMerged` but throws a descriptive `TypeError` on failure
- * instead of returning `false`. Use when you want to assert correctness and
- * surface problems early.
+ * Asserts variant. Throws a descriptive `TypeError` with full TypeBox error
+ * paths if validation fails.
  *
  * @throws {TypeError}
  */
@@ -99,11 +101,13 @@ export function assertMerged(schema: Schema): asserts schema is MergedSchema {
 }
 
 /**
- * Compiles a custom TypeBox schema against the result of `merge()`.
- * Use this when you want to validate a more specific shape than `MergedSchema`.
+ * Compiles a custom TypeBox `TObject` into a reusable type guard.
+ * Use when you need a stricter or more specific shape than `MergedSchema`.
  *
  * @example
- * const check = compileMergedValidator(Type.Object({ required: Type.Array(Type.String()) }))
+ * const check = compileMergedValidator(
+ *   Type.Object({ required: Type.Array(Type.String()) })
+ * )
  * if (check(result)) { result.required }
  */
 export function compileMergedValidator<T extends TObject>(
