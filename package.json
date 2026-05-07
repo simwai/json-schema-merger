@@ -1,19 +1,28 @@
 {
   "name": "json-schema-merger",
   "version": "0.1.0",
-  "description": "POC: Draft 2020-12 local JSON Schema merger with runtime meta-schema keyword discovery",
+  "description": "Draft 2020-12, 2019-09 and Draft 7 local JSON Schema merger with runtime meta-schema keyword discovery",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release": "semantic-release",
+    "prepare": "husky"
   },
   "dependencies": {
     "got": "^14.4.2"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/npm": "^12.0.1",
+    "husky": "^9.1.7",
+    "semantic-release": "^24.2.5",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }
