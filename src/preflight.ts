@@ -3,10 +3,7 @@ import { isPlainObject } from './guards.js'
 import type { Schema } from './types.js'
 import { SUPPORTED_DRAFT } from './types.js'
 
-// $ref, if, then, else are handled by local-ref.ts and if-then-else.ts
-// BEFORE preflight runs. Any that survive to this point are bugs in the
-// caller, not unsupported keywords — so we do NOT list them here.
-const _failFastKeywords = new Set([
+const unsupportedKeywords = new Set([
   '$dynamicRef',
   '$dynamicAnchor',
   '$anchor',
@@ -17,12 +14,8 @@ const _failFastKeywords = new Set([
 
 function collectUnsupported(schema: Schema, path: string, found: string[]): void {
   for (const [key, value] of Object.entries(schema)) {
-    if (_failFastKeywords.has(key)) {
-      found.push(`${path} → "${key}"`)
-    }
-    if (isPlainObject(value)) {
-      collectUnsupported(value as Schema, `${path}.${key}`, found)
-    }
+    if (unsupportedKeywords.has(key)) found.push(`${path} → "${key}"`)
+    if (isPlainObject(value)) collectUnsupported(value as Schema, `${path}.${key}`, found)
   }
 }
 

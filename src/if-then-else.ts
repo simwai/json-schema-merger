@@ -1,41 +1,41 @@
 import { isPlainObject } from './guards.js'
 import type { JsonObject, Schema } from './types.js'
 
-/**
- * Lifts `if`/`then`/`else` out of a schema before merging by wrapping them
- * in `allOf` entries instead of letting them pass through as-is.
- *
- * Draft 2020-12 semantics:
- *   { if: C, then: T, else: E } ≡ allOf: [{ if: C, then: T }, { if: { not: C }, then: E }]
- *
- * The resulting schema has no `if`/`then`/`else` keys — it is safe for the
- * standard merger to process.
- */
 export function liftIfThenElse(schema: Schema): Schema {
   const ifClause = schema['if']
-  const thenClause = schema['then']
-  const elseClause = schema['else']
-
   if (!isPlainObject(ifClause)) return schema
 
-  const lifted: JsonObject[] = []
-
-  if (isPlainObject(thenClause)) {
-    lifted.push({ if: ifClause as JsonObject, then: thenClause as JsonObject })
-  }
-
-  if (isPlainObject(elseClause)) {
-    lifted.push({
-      if: { not: ifClause as JsonObject },
-      then: elseClause as JsonObject,
-    })
-  }
+  const lifted = [
+    buildThenEntry(ifClause as JsonObject, schema['then']),
+    buildElseEntry(ifClause as JsonObject, schema['else']),
+  ].filter((entry): entry is JsonObject => entry !== undefined)
 
   if (lifted.length === 0) return schema
 
-  const { if: _if, then: _then, else: _else, ...rest } = schema as Record<string, unknown>
-  void _if; void _then; void _else
+  const existing = Array.isArray(schema['allOf']) ? (schema['allOf'] as JsonObject[]) : []
+  return {
+    ...omitKeys(schema, ['if', 'then', 'else']),
+    allOf: [...existing, ...lifted],
+  } as Schema
+}
 
-  const existing = Array.isArray(rest['allOf']) ? (rest['allOf'] as JsonObject[]) : []
-  return { ...rest, allOf: [...existing, ...lifted] } as Schema
+function buildThenEntry(
+  ifClause: JsonObject,
+  thenClause: unknown
+): JsonObject | undefined {
+  if (!isPlainObject(thenClause)) return undefined
+  return { if: ifClause, then: thenClause as JsonObject }
+}
+
+function buildElseEntry(
+  ifClause: JsonObject,
+  elseClause: unknown
+): JsonObject | undefined {
+  if (!isPlainObject(elseClause)) return undefined
+  return { if: { not: ifClause }, then: elseClause as JsonObject }
+}
+
+function omitKeys(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const keySet = new Set(keys)
+  return Object.fromEntries(Object.entries(obj).filter(([k]) => !keySet.has(k)))
 }

@@ -11,17 +11,17 @@ export { seedKeywordMap } from './meta-schema.js'
 export type { JsonObject, JsonPrimitive, JsonValue, Schema } from './types.js'
 export { SUPPORTED_DRAFT }
 
-function prepare(schema: Schema): Schema {
+function extractDraftUri(schema: Schema): string {
+  return typeof schema['$schema'] === 'string' ? schema['$schema'] : SUPPORTED_DRAFT
+}
+
+function applyPreMergePasses(schema: Schema): Schema {
   return liftIfThenElse(resolveLocalRefs(schema))
 }
 
 export async function merge(...rawSchemas: [Schema, Schema, ...Schema[]]): Promise<Schema> {
-  const draftUri = typeof rawSchemas[0]?.['$schema'] === 'string'
-    ? rawSchemas[0]['$schema']
-    : SUPPORTED_DRAFT
-
-  const keywordMap = await getKeywordMap(draftUri)
-  const schemas = rawSchemas.map(prepare)
+  const keywordMap = await getKeywordMap(extractDraftUri(rawSchemas[0]))
+  const schemas = rawSchemas.map(applyPreMergePasses)
 
   return schemas.slice(1).reduce<Schema>(
     (accumulated, next) => {
