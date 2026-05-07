@@ -10,11 +10,11 @@ const upperBoundKeywords: ReadonlyArray<string> = [
 ]
 
 const objectMapKeywords: ReadonlyArray<string> = [
-  'properties', '$defs', 'patternProperties', 'dependentRequired',
+  'properties', '$defs', 'definitions', 'patternProperties', 'dependentRequired',
 ]
 
 const arrayUnionKeywords: ReadonlyArray<string> = [
-  'type', 'allOf', 'anyOf', 'oneOf', 'prefixItems', 'enum', 'examples', 'required',
+  'type', 'allOf', 'anyOf', 'oneOf', 'prefixItems', 'items', 'enum', 'examples', 'required',
 ]
 
 const failFastKeywords: ReadonlyArray<string> = [
