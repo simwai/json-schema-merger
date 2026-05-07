@@ -10,6 +10,13 @@ export { DraftMismatchError, UnsupportedDraftError, UnsupportedKeywordError } fr
 export { seedKeywordMap } from './meta-schema.js'
 export type { JsonObject, JsonPrimitive, JsonValue, Schema } from './types.js'
 export { SUPPORTED_DRAFT, SUPPORTED_DRAFTS }
+export {
+  MergedSchemaShape,
+  assertMerged,
+  compileMergedValidator,
+  validateMerged,
+} from './validator.js'
+export type { MergedSchema } from './validator.js'
 
 function extractDraftUri(schema: Schema): string {
   if (typeof schema['$schema'] !== 'string') return SUPPORTED_DRAFT
