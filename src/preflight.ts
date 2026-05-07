@@ -3,19 +3,15 @@ import { isPlainObject } from './guards.js'
 import type { Schema } from './types.js'
 import { SUPPORTED_DRAFT } from './types.js'
 
-// Keywords that remain unsupported after pre-processing passes.
-// Note: $ref, if, then, else are handled upstream (local-ref.ts, if-then-else.ts)
-// and must NOT appear in schemas reaching the merger.
+// $ref, if, then, else are handled by local-ref.ts and if-then-else.ts
+// BEFORE preflight runs. Any that survive to this point are bugs in the
+// caller, not unsupported keywords — so we do NOT list them here.
 const _failFastKeywords = new Set([
-  '$ref',
   '$dynamicRef',
   '$dynamicAnchor',
   '$anchor',
   'unevaluatedProperties',
   'unevaluatedItems',
-  'if',
-  'then',
-  'else',
   'not',
 ])
 

@@ -81,11 +81,13 @@ describe('merge()', () => {
     })
 
     it('should union two different scalar types', async () => {
+      // schema() injects type: 'object' — overrides replace it entirely.
+      // Left: type 'string', right: type 'null' → union ['string', 'null'].
       const result = await merge(
         schema({ type: 'string' }),
         schema({ type: 'null' })
       )
-      expect(result['type']).toEqual(['object', 'string', 'null'])
+      expect(result['type']).toEqual(['string', 'null'])
     })
   })
 
@@ -288,7 +290,10 @@ describe('merge()', () => {
     it('should throw on an unresolvable local $ref', async () => {
       await expect(
         merge(
-          schema({ properties: { id: { $ref: '#/$defs/Missing' } } }),
+          schema({
+            $defs: {},
+            properties: { id: { $ref: '#/$defs/Missing' } },
+          }),
           schema()
         )
       ).rejects.toThrow('Cannot resolve $ref')
