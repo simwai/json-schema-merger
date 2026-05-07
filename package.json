@@ -13,6 +13,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
     "got": "^14.4.2"
   },
   "devDependencies": {
