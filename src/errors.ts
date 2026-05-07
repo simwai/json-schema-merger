@@ -25,8 +25,8 @@ export class UnsupportedDraftError extends Error {
   constructor(draft: string | undefined) {
     const supported = [...SUPPORTED_DRAFTS].map((d) => `"${d}"`).join(', ')
     super(
-      `Unsupported draft "${draft ?? '(none)'}"`. +
-      ` Supported drafts: ${supported}.`
+      `Unsupported draft "${draft ?? '(none)'}" ` +
+      `Supported drafts: ${supported}.`
     )
     this.name = 'UnsupportedDraftError'
   }
