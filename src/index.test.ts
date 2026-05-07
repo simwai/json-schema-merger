@@ -81,8 +81,6 @@ describe('merge()', () => {
     })
 
     it('should union two different scalar types', async () => {
-      // schema() injects type: 'object' — overrides replace it entirely.
-      // Left: type 'string', right: type 'null' → union ['string', 'null'].
       const result = await merge(
         schema({ type: 'string' }),
         schema({ type: 'null' })
@@ -213,14 +211,12 @@ describe('merge()', () => {
       })
     })
 
-    it('should overwrite overlapping $defs key with last-writer-wins', async () => {
+    it('should recursively merge overlapping $defs entries', async () => {
       const result = await merge(
         schema({ $defs: { Foo: { type: 'string' } } }),
         schema({ $defs: { Foo: { type: 'number' } } })
       )
       const defs = result['$defs'] as Record<string, unknown>
-      // Foo is a plain object on both sides — mergeObjectMap recurses into it.
-      // type 'string' + type 'number' → ['string', 'number']
       expect((defs['Foo'] as Record<string, unknown>)['type']).toEqual(['string', 'number'])
     })
   })
@@ -298,6 +294,21 @@ describe('merge()', () => {
         )
       ).rejects.toThrow('Cannot resolve $ref')
     })
+
+    it('should inline a $ref and apply stricter numeric bounds from the other schema', async () => {
+      const result = await merge(
+        schema({
+          $defs: { Age: { type: 'integer', minimum: 0, maximum: 150 } },
+          properties: { age: { $ref: '#/$defs/Age' } },
+        }),
+        schema({
+          properties: { age: { type: 'integer', minimum: 18, maximum: 120 } },
+        })
+      )
+      const age = (result['properties'] as Record<string, unknown>)['age'] as Record<string, unknown>
+      expect(age['minimum']).toBe(18)
+      expect(age['maximum']).toBe(120)
+    })
   })
 
   describe('if/then/else → allOf lift', () => {
@@ -322,6 +333,22 @@ describe('merge()', () => {
       )
       const allOf = result['allOf'] as unknown[]
       expect(allOf.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('should union lifted allOf with existing allOf from the other schema', async () => {
+      const result = await merge(
+        schema({
+          if: { required: ['isAdmin'] },
+          then: { properties: { permissions: { type: 'array' } } },
+        }),
+        schema({ allOf: [{ required: ['id'] }] })
+      )
+      const allOf = result['allOf'] as unknown[]
+      expect(allOf.length).toBeGreaterThanOrEqual(2)
+      const hasRequired = allOf.some(
+        (e) => JSON.stringify(e) === JSON.stringify({ required: ['id'] })
+      )
+      expect(hasRequired).toBe(true)
     })
   })
 
@@ -355,6 +382,163 @@ describe('merge()', () => {
         schema({ required: ['c'] })
       )
       expect(result['required']).toEqual(['a', 'b', 'c'])
+    })
+  })
+
+  describe('integration', () => {
+    it('should merge two realistic user schemas end-to-end', async () => {
+      const base = schema({
+        title: 'User base',
+        required: ['id', 'email'],
+        minProperties: 2,
+        properties: {
+          id:    { type: 'string', minLength: 1 },
+          email: { type: 'string', format: 'email' },
+          role:  { type: 'string', enum: ['viewer', 'editor'] },
+        },
+        $defs: {
+          NonEmptyString: { type: 'string', minLength: 1 },
+        },
+      })
+
+      const extension = schema({
+        title: 'User extended',
+        required: ['id', 'name'],
+        minProperties: 3,
+        maxProperties: 20,
+        properties: {
+          id:   { type: 'string', minLength: 5 },
+          name: { $ref: '#/$defs/NonEmptyString' },
+          role: { type: 'string', enum: ['editor', 'admin'] },
+        },
+        $defs: {
+          NonEmptyString: { type: 'string', minLength: 1 },
+        },
+      })
+
+      const result = await merge(base, extension)
+
+      expect(result['title']).toBe('User extended')
+      expect(result['required']).toEqual(['id', 'email', 'name'])
+      expect(result['minProperties']).toBe(3)
+      expect(result['maxProperties']).toBe(20)
+
+      const props = result['properties'] as Record<string, Record<string, unknown>>
+      expect(props['id']['minLength']).toBe(5)
+      expect(Array.isArray(props['id']['type'])).toBe(true)
+      expect(props['email']['format']).toBe('email')
+      expect(props['name']).toBeDefined()
+
+      const role = props['role']
+      const roleEnum = role['enum'] as string[]
+      expect(roleEnum).toContain('viewer')
+      expect(roleEnum).toContain('editor')
+      expect(roleEnum).toContain('admin')
+    })
+
+    it('should merge three product schemas accumulating all constraints', async () => {
+      const core = schema({
+        required: ['sku', 'price'],
+        properties: {
+          sku:   { type: 'string', minLength: 3, maxLength: 20 },
+          price: { type: 'number', minimum: 0 },
+        },
+      })
+
+      const inventory = schema({
+        required: ['stock'],
+        properties: {
+          sku:   { type: 'string', minLength: 6 },
+          stock: { type: 'integer', minimum: 0 },
+        },
+      })
+
+      const marketplace = schema({
+        required: ['sellerId'],
+        maxProperties: 15,
+        properties: {
+          price:    { type: 'number', minimum: 0.01, maximum: 99999 },
+          sellerId: { type: 'string', minLength: 8 },
+        },
+      })
+
+      const result = await merge(core, inventory, marketplace)
+
+      expect(result['required']).toEqual(['sku', 'price', 'stock', 'sellerId'])
+      expect(result['maxProperties']).toBe(15)
+
+      const props = result['properties'] as Record<string, Record<string, unknown>>
+      expect(props['sku']['minLength']).toBe(6)
+      expect(props['sku']['maxLength']).toBe(20)
+      expect(props['price']['minimum']).toBe(0.01)
+      expect(props['price']['maximum']).toBe(99999)
+      expect(props['stock']).toBeDefined()
+      expect(props['sellerId']['minLength']).toBe(8)
+    })
+
+    it('should handle $defs shared across schemas with overlapping definitions', async () => {
+      const a = schema({
+        $defs: {
+          Status: { type: 'string', enum: ['active', 'inactive'] },
+          Tag:    { type: 'string', minLength: 1, maxLength: 32 },
+        },
+        properties: {
+          status: { $ref: '#/$defs/Status' },
+        },
+      })
+
+      const b = schema({
+        $defs: {
+          Status: { type: 'string', enum: ['active', 'pending', 'archived'] },
+          Tag:    { type: 'string', minLength: 2, maxLength: 64 },
+        },
+        properties: {
+          tag: { $ref: '#/$defs/Tag' },
+        },
+      })
+
+      const result = await merge(a, b)
+
+      const defs = result['$defs'] as Record<string, Record<string, unknown>>
+      const statusEnum = defs['Status']['enum'] as string[]
+      expect(statusEnum).toContain('active')
+      expect(statusEnum).toContain('inactive')
+      expect(statusEnum).toContain('pending')
+      expect(statusEnum).toContain('archived')
+
+      expect(defs['Tag']['minLength']).toBe(2)
+      expect(defs['Tag']['maxLength']).toBe(32)
+
+      const props = result['properties'] as Record<string, Record<string, unknown>>
+      expect(props['status']).toBeDefined()
+      expect(props['tag']).toBeDefined()
+    })
+
+    it('should lift if/then from one schema and union its allOf with the other', async () => {
+      const conditional = schema({
+        if:   { properties: { role: { const: 'admin' } } },
+        then: { required: ['adminToken'] },
+        else: { required: ['userToken'] },
+        properties: { role: { type: 'string' } },
+      })
+
+      const base = schema({
+        required: ['id'],
+        allOf: [{ minProperties: 2 }],
+        properties: { id: { type: 'string' } },
+      })
+
+      const result = await merge(conditional, base)
+
+      expect(result['required']).toContain('id')
+
+      const allOf = result['allOf'] as unknown[]
+      expect(Array.isArray(allOf)).toBe(true)
+      expect(allOf.length).toBeGreaterThanOrEqual(3)
+
+      const props = result['properties'] as Record<string, unknown>
+      expect(props).toHaveProperty('role')
+      expect(props).toHaveProperty('id')
     })
   })
 })

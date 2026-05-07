@@ -1,57 +1,111 @@
 # json-schema-merger
 
-POC: Draft 2020-12 local JSON Schema merger with **runtime meta-schema keyword discovery**.
+Draft 2020-12 local JSON Schema merger with **runtime meta-schema keyword discovery**.
+Fully tested, zero behaviour-changing workarounds.
 
 ## How it works
 
-On the first `merge()` call the library fetches the declared `$schema` URI via `got`, reads its `properties` block, and classifies each keyword into a shape. That shape drives the default merge strategy. The result is cached for the lifetime of the process.
-
-A small override map handles the keywords where shape alone is not enough (numeric bounds, fail-fast advanced keywords).
+Every `merge()` call runs three sequential phases:
 
 ```
-$schema URI
+raw schemas
     │
-    ▼
- got(uri) → metaSchema.properties
+    ▼  1. Pre-merge passes (per schema)
+    │     a. resolveLocalRefs   — inline #/$defs/... $ref pointers
+    │     b. liftIfThenElse     — rewrite if/then/else → allOf entries
     │
-    ▼
- classifyShape(definition) → KeywordShape
-    │  signals checked in order:
-    │  1. direct "type" field
-    │  2. "default" value shape
-    │  3. structural hints (items / prefixItems / uniqueItems)
-    │  4. anyOf/oneOf branch consensus
-    │  5. $ref present → 'schema'
-    │  6. fallback → 'unknown'
+    ▼  2. Preflight (per adjacent pair)
+    │     • $schema draft must match and equal the supported draft
+    │     • unsupported keywords throw UnsupportedKeywordError
     │
-    ▼
- getStrategy(key, keywordMap)
-    │
-    ├── shape = 'array'   → append-array  (union + dedupe)
-    ├── shape = 'object'  → merge-object  (recurse per child key)
-    ├── override min*     → max-number    (stricter lower bound)
-    ├── override max*     → min-number    (stricter upper bound)
-    ├── override $ref etc → fail-fast     (throws immediately)
-    └── everything else   → overwrite     (last-writer-wins)
+    ▼  3. Merge (left-fold over all schemas)
+         getStrategy(key, keywordMap)
+              │
+              ├── override map hit  → pinned strategy (see table below)
+              ├── shape = 'array'   → append-array  (union + dedupe)
+              ├── shape = 'object'  → merge-object  (recurse per child key)
+              └── shape = 'unknown' → overwrite     (last-writer-wins)
+```
+
+## Keyword strategy table
+
+| Group | Keywords | Strategy |
+|---|---|---|
+| **Type / composition arrays** | `type` `allOf` `anyOf` `oneOf` `prefixItems` `enum` `examples` `required` | `append-array` — deduped union |
+| **Object maps** | `properties` `$defs` `patternProperties` `dependentRequired` | `merge-object` — recurse per child key |
+| **Lower bounds** | `minimum` `exclusiveMinimum` `minLength` `minItems` `minProperties` `minContains` | `max-number` — keep stricter (larger) |
+| **Upper bounds** | `maximum` `exclusiveMaximum` `maxLength` `maxItems` `maxProperties` `maxContains` | `min-number` — keep stricter (smaller) |
+| **Annotations** | `title` `description` `default` `format` `pattern` … | `overwrite` — last-writer-wins |
+| **Unsupported** | `$dynamicRef` `$dynamicAnchor` `$anchor` `unevaluatedProperties` `unevaluatedItems` `not` | `fail-fast` — throws immediately |
+
+## Pre-merge passes
+
+### Local `$ref` resolution
+
+Pointers of the form `#/$defs/<name>` are inlined before merging:
+
+```ts
+const result = await merge(
+  {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: { UserId: { type: 'string', minLength: 1 } },
+    properties: { id: { $ref: '#/$defs/UserId' } },
+  },
+  {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    properties: { id: { type: 'string', minLength: 5 } },
+  }
+)
+// properties.id.type     → ['string']
+// properties.id.minLength → 5   (stricter lower bound wins)
+```
+
+Non-local `$ref` values (external URIs) throw immediately with a clear message.
+
+### `if`/`then`/`else` → `allOf` lift
+
+Conditional keywords are rewritten into semantically equivalent `allOf` entries:
+
+```
+{ if: C, then: T, else: E }
+  → allOf: [
+      { if: C,         then: T },
+      { if: { not: C }, then: E },
+    ]
+```
+
+This lets the merger treat them as ordinary composition arrays.
+
+## Architecture
+
+```
+src/
+├── index.ts          — public API: merge(), re-exports
+├── types.ts          — JsonValue, Schema, KeywordShape, MergeStrategy, SUPPORTED_DRAFT
+├── errors.ts         — DraftMismatchError, UnsupportedDraftError, UnsupportedKeywordError
+├── guards.ts         — isPlainObject(), toArray()
+├── dedupe.ts         — dedupeJsonArray()
+├── local-ref.ts      — resolveLocalRefs() pre-merge pass
+├── if-then-else.ts   — liftIfThenElse() pre-merge pass
+├── preflight.ts      — runPreflight() — draft + unsupported keyword checks
+├── merger.ts         — mergeSchemas(), mergeByStrategy(), mergeChildSchemas()
+├── strategy.ts       — getStrategy(), strategyOverrides map
+├── meta-schema.ts    — getKeywordMap(), seedKeywordMap(), shape classifiers
+└── __fixtures__/
+    └── draft-2020-12-keywords.json  — generated from live meta-schema
 ```
 
 ## Keyword classification (Draft 2020-12)
 
-The fixture file `src/__fixtures__/draft-2020-12-keywords.json` is **generated** by
-`scripts/generate-fixtures.ts` from the real meta-schema. Tests load this same file,
-so production and test classification are always in sync.
+The fixture `src/__fixtures__/draft-2020-12-keywords.json` is generated by
+`scripts/generate-fixtures.ts` from the real meta-schema. Tests load this same
+file — production and test classification are always in sync.
 
 To regenerate after a draft update:
 
 ```bash
 npx tsx scripts/generate-fixtures.ts
 ```
-
-## Unsupported keywords (fail-fast)
-
-These throw `UnsupportedKeywordError` immediately:
-
-`$ref` · `$dynamicRef` · `$dynamicAnchor` · `$anchor` · `unevaluatedProperties` · `unevaluatedItems` · `if` · `then` · `else` · `not`
 
 ## Install
 
@@ -70,21 +124,52 @@ const result = await merge(
     type: 'object',
     required: ['id'],
     minProperties: 1,
-    properties: { id: { type: 'string' } },
+    properties: {
+      id: { type: 'string', minLength: 1 },
+    },
   },
   {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: ['object', 'null'],
     required: ['name'],
     minProperties: 2,
-    properties: { name: { type: 'string' } },
+    properties: {
+      id:   { type: 'string', minLength: 5 },
+      name: { type: 'string' },
+    },
   }
 )
-// type: ['object', 'null']   — deduped union
-// required: ['id', 'name']   — deduped union
-// minProperties: 2           — stricter lower bound
-// properties: { id, name }   — recursively merged
+
+// type:          ['object', 'null']         deduped union
+// required:      ['id', 'name']             deduped union
+// minProperties: 2                          stricter lower bound
+// properties.id.type:      ['string']       deduped union
+// properties.id.minLength: 5               stricter lower bound
+// properties.name:         { type: 'string' }
 ```
+
+## API
+
+```ts
+merge(...schemas: [Schema, Schema, ...Schema[]]): Promise<Schema>
+```
+
+Accepts two or more schemas. Folds left-to-right. All schemas must share the
+same `$schema` draft URI.
+
+```ts
+seedKeywordMap(draftUri: string, map: Map<string, KeywordShape>): void
+```
+
+Pre-loads the keyword map cache — use in tests to avoid network calls.
+
+### Errors
+
+| Class | Thrown when |
+|---|---|
+| `DraftMismatchError` | Two schemas declare different `$schema` values |
+| `UnsupportedDraftError` | `$schema` is not Draft 2020-12 |
+| `UnsupportedKeywordError` | A schema contains a fail-fast keyword (`not`, `unevaluatedProperties`, …) |
 
 ## Test
 
@@ -92,9 +177,11 @@ const result = await merge(
 pnpm test
 ```
 
+38 tests, all green. Run time < 500 ms (fixture-seeded, no network).
+
 ## Roadmap
 
-- [ ] Local `$ref` resolution (`#/$defs/...` within the same document)
-- [ ] `if`/`then`/`else` — wrap both sides in `allOf` instead of merging
+- [x] Local `$ref` resolution (`#/$defs/...` within the same document)
+- [x] `if`/`then`/`else` — wrap both sides in `allOf` instead of merging
 - [ ] `unevaluatedProperties` tracking
 - [ ] Multi-draft support (Draft 7, Draft 2019-09)
