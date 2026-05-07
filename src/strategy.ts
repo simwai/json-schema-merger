@@ -1,28 +1,28 @@
 import type { KeywordMap } from './meta-schema.js'
 import type { KeywordShape, MergeStrategy } from './types.js'
 
-const lowerBoundKeywords: ReadonlyArray<string> = [
+export const lowerBoundKeywords: ReadonlyArray<string> = [
   'minimum', 'exclusiveMinimum', 'minLength', 'minItems', 'minProperties', 'minContains',
 ]
 
-const upperBoundKeywords: ReadonlyArray<string> = [
+export const upperBoundKeywords: ReadonlyArray<string> = [
   'maximum', 'exclusiveMaximum', 'maxLength', 'maxItems', 'maxProperties', 'maxContains',
 ]
 
-const objectMapKeywords: ReadonlyArray<string> = [
+export const objectMapKeywords: ReadonlyArray<string> = [
   // 2020-12 / 2019-09
   'properties', '$defs', 'patternProperties', 'dependentRequired',
   // Draft 7 alias for $defs
   'definitions',
 ]
 
-const arrayUnionKeywords: ReadonlyArray<string> = [
+export const arrayUnionKeywords: ReadonlyArray<string> = [
   'type', 'allOf', 'anyOf', 'oneOf', 'prefixItems', 'enum', 'examples', 'required',
   // Draft 7 / 2019-09 tuple items (array form)
   'items',
 ]
 
-const failFastKeywords: ReadonlyArray<string> = [
+export const failFastKeywords: ReadonlyArray<string> = [
   '$dynamicRef', '$dynamicAnchor', '$anchor',
   'unevaluatedProperties', 'unevaluatedItems',
   '$recursiveRef', '$recursiveAnchor',
