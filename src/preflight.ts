@@ -1,42 +1,40 @@
 import { DraftMismatchError, UnsupportedDraftError, UnsupportedKeywordError } from './errors.js'
 import { isPlainObject } from './guards.js'
 import type { Schema } from './types.js'
-import { DRAFT_2019_09, DRAFT_2020_12, DRAFT_7, SUPPORTED_DRAFTS } from './types.js'
+import { SUPPORTED_DRAFTS } from './types.js'
 
-const unsupportedKeywordsByDraft = new Map<string, ReadonlySet<string>>([
+// Keywords unsupported across all drafts
+const _alwaysUnsupported = new Set(['$dynamicRef', '$dynamicAnchor', '$anchor', 'not'])
+
+// Per-draft additional unsupported keywords (on top of _alwaysUnsupported)
+const _draftUnsupported = new Map<string, ReadonlySet<string>>([
   [
-    DRAFT_7,
-    new Set([
-      '$dynamicRef', '$dynamicAnchor', '$anchor',
-      'unevaluatedProperties', 'unevaluatedItems',
-    ]),
+    'https://json-schema.org/draft/2020-12/schema',
+    new Set(['unevaluatedProperties', 'unevaluatedItems']),
   ],
   [
-    DRAFT_2019_09,
-    new Set([
-      '$dynamicRef', '$dynamicAnchor',
-      'unevaluatedProperties', 'unevaluatedItems',
-    ]),
+    'https://json-schema.org/draft/2019-09/schema',
+    new Set(['unevaluatedProperties', 'unevaluatedItems', '$recursiveRef', '$recursiveAnchor']),
   ],
-  [
-    DRAFT_2020_12,
-    new Set([
-      '$dynamicRef', '$dynamicAnchor', '$anchor',
-      'unevaluatedProperties', 'unevaluatedItems',
-      'not',
-    ]),
-  ],
+  // Draft 7 has no additional unsupported keywords beyond the always-unsupported set
+  ['https://json-schema.org/draft-07/schema', new Set<string>()],
+  ['http://json-schema.org/draft-07/schema#', new Set<string>()],
 ])
+
+function unsupportedKeywordsForDraft(draftUri: string): ReadonlySet<string> {
+  const extra = _draftUnsupported.get(draftUri) ?? new Set<string>()
+  return new Set([..._alwaysUnsupported, ...extra])
+}
 
 function collectUnsupported(
   schema: Schema,
-  unsupported: ReadonlySet<string>,
   path: string,
+  unsupported: ReadonlySet<string>,
   found: string[]
 ): void {
   for (const [key, value] of Object.entries(schema)) {
     if (unsupported.has(key)) found.push(`${path} → "${key}"`)
-    if (isPlainObject(value)) collectUnsupported(value as Schema, unsupported, `${path}.${key}`, found)
+    if (isPlainObject(value)) collectUnsupported(value as Schema, `${path}.${key}`, unsupported, found)
   }
 }
 
@@ -47,10 +45,10 @@ export function runPreflight(a: Schema, b: Schema): void {
   if (draftA !== draftB) throw new DraftMismatchError(draftA, draftB)
   if (draftA === undefined || !SUPPORTED_DRAFTS.has(draftA)) throw new UnsupportedDraftError(draftA)
 
-  const unsupported = unsupportedKeywordsByDraft.get(draftA)!
+  const unsupported = unsupportedKeywordsForDraft(draftA)
   const found: string[] = []
-  collectUnsupported(a, unsupported, 'schema A', found)
-  collectUnsupported(b, unsupported, 'schema B', found)
+  collectUnsupported(a, 'schema A', unsupported, found)
+  collectUnsupported(b, 'schema B', unsupported, found)
 
   if (found.length > 0) throw new UnsupportedKeywordError(found)
 }

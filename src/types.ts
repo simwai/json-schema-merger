@@ -20,9 +20,11 @@ export type MergeStrategy =
   | 'overwrite'
   | 'fail-fast'
 
-export const DRAFT_7       = 'http://json-schema.org/draft-07/schema#' as const
-export const DRAFT_2019_09 = 'https://json-schema.org/draft/2019-09/schema' as const
-export const DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema' as const
+export const SUPPORTED_DRAFT = 'https://json-schema.org/draft/2020-12/schema' as const
 
-export const SUPPORTED_DRAFT  = DRAFT_2020_12
-export const SUPPORTED_DRAFTS = new Set([DRAFT_7, DRAFT_2019_09, DRAFT_2020_12] as const)
+export const SUPPORTED_DRAFTS: ReadonlySet<string> = new Set([
+  'https://json-schema.org/draft/2020-12/schema',
+  'https://json-schema.org/draft/2019-09/schema',
+  'https://json-schema.org/draft-07/schema',
+  'http://json-schema.org/draft-07/schema#',
+])

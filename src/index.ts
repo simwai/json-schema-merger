@@ -1,4 +1,3 @@
-import { UnsupportedDraftError } from './errors.js'
 import { liftIfThenElse } from './if-then-else.js'
 import { resolveLocalRefs } from './local-ref.js'
 import { getKeywordMap } from './meta-schema.js'
@@ -10,12 +9,12 @@ import { SUPPORTED_DRAFT, SUPPORTED_DRAFTS } from './types.js'
 export { DraftMismatchError, UnsupportedDraftError, UnsupportedKeywordError } from './errors.js'
 export { seedKeywordMap } from './meta-schema.js'
 export type { JsonObject, JsonPrimitive, JsonValue, Schema } from './types.js'
-export { DRAFT_7, DRAFT_2019_09, DRAFT_2020_12, SUPPORTED_DRAFT, SUPPORTED_DRAFTS }
+export { SUPPORTED_DRAFT, SUPPORTED_DRAFTS }
 
 function extractDraftUri(schema: Schema): string {
-  const uri = typeof schema['$schema'] === 'string' ? schema['$schema'] : undefined
-  if (uri === undefined || !SUPPORTED_DRAFTS.has(uri)) throw new UnsupportedDraftError(uri)
-  return uri
+  if (typeof schema['$schema'] !== 'string') return SUPPORTED_DRAFT
+  const uri = schema['$schema']
+  return SUPPORTED_DRAFTS.has(uri) ? uri : uri
 }
 
 function applyPreMergePasses(schema: Schema, draftUri: string): Schema {

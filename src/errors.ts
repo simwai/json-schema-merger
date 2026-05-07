@@ -1,13 +1,21 @@
 import { SUPPORTED_DRAFTS } from './types.js'
 
-const supportedList = [...SUPPORTED_DRAFTS].map((d) => `  • ${d}`).join('\n')
+export class UnsupportedKeywordError extends Error {
+  constructor(paths: string[]) {
+    super(
+      `The following keywords require evaluation-state or reference resolution ` +
+      `and cannot be safely merged by this library:\n  ${paths.join('\n  ')}\n` +
+      `Remove them or handle them manually before merging.`
+    )
+    this.name = 'UnsupportedKeywordError'
+  }
+}
 
 export class DraftMismatchError extends Error {
-  constructor(draftA: string | undefined, draftB: string | undefined) {
+  constructor(a: string | undefined, b: string | undefined) {
     super(
-      `Cannot merge schemas with different $schema drafts.\n` +
-      `  Schema A: ${draftA ?? '(none)'}\n` +
-      `  Schema B: ${draftB ?? '(none)'}`
+      `Both schemas must declare the same $schema. ` +
+      `Got "${a ?? '(none)'}" and "${b ?? '(none)'}".`
     )
     this.name = 'DraftMismatchError'
   }
@@ -15,20 +23,11 @@ export class DraftMismatchError extends Error {
 
 export class UnsupportedDraftError extends Error {
   constructor(draft: string | undefined) {
+    const supported = [...SUPPORTED_DRAFTS].map((d) => `"${d}"`).join(', ')
     super(
-      `Unsupported $schema draft: "${draft ?? '(none)'}"\n` +
-      `Supported drafts:\n${supportedList}`
+      `Unsupported draft "${draft ?? '(none)'}"`. +
+      ` Supported drafts: ${supported}.`
     )
     this.name = 'UnsupportedDraftError'
-  }
-}
-
-export class UnsupportedKeywordError extends Error {
-  constructor(locations: string[]) {
-    super(
-      `Schema contains unsupported keywords that cannot be safely merged:\n` +
-      locations.map((l) => `  • ${l}`).join('\n')
-    )
-    this.name = 'UnsupportedKeywordError'
   }
 }

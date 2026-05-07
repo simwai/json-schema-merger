@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import {
   DraftMismatchError,
   SUPPORTED_DRAFT,
+  SUPPORTED_DRAFTS,
   UnsupportedDraftError,
   UnsupportedKeywordError,
   merge,
@@ -10,15 +11,31 @@ import {
 import type { KeywordShape } from './types.js'
 import fixtureKeywords from './__fixtures__/draft-2020-12-keywords.json' assert { type: 'json' }
 
+const DRAFT_07 = 'https://json-schema.org/draft-07/schema'
+const DRAFT_2019 = 'https://json-schema.org/draft/2019-09/schema'
+
 beforeAll(() => {
   seedKeywordMap(
     SUPPORTED_DRAFT,
     new Map(Object.entries(fixtureKeywords) as [string, KeywordShape][])
   )
+  // Seed Draft 7 and 2019-09 with the same fixture — the keyword map is used
+  // for shape-based fallback only; explicit strategy overrides cover all
+  // draft-specific keywords (definitions, items-array, etc.)
+  seedKeywordMap(DRAFT_07, new Map(Object.entries(fixtureKeywords) as [string, KeywordShape][]))
+  seedKeywordMap(DRAFT_2019, new Map(Object.entries(fixtureKeywords) as [string, KeywordShape][]))
 })
 
 function schema(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return { $schema: SUPPORTED_DRAFT, type: 'object', ...overrides }
+}
+
+function schema07(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { $schema: DRAFT_07, type: 'object', ...overrides }
+}
+
+function schema2019(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { $schema: DRAFT_2019, type: 'object', ...overrides }
 }
 
 describe('merge()', () => {
@@ -27,23 +44,47 @@ describe('merge()', () => {
       await expect(
         merge(
           { $schema: SUPPORTED_DRAFT, type: 'object' },
-          { $schema: 'https://json-schema.org/draft-07/schema', type: 'object' }
+          { $schema: DRAFT_07, type: 'object' }
         )
       ).rejects.toBeInstanceOf(DraftMismatchError)
     })
 
-    it('should reject unsupported draft', async () => {
+    it('should reject completely unsupported draft', async () => {
       await expect(
         merge(
-          { $schema: 'https://json-schema.org/draft-07/schema', type: 'object' },
-          { $schema: 'https://json-schema.org/draft-07/schema', type: 'object' }
+          { $schema: 'https://json-schema.org/draft-06/schema', type: 'object' },
+          { $schema: 'https://json-schema.org/draft-06/schema', type: 'object' }
         )
       ).rejects.toBeInstanceOf(UnsupportedDraftError)
     })
 
-    it('should reject schemas containing unevaluatedProperties', async () => {
+    it('should accept Draft 7 schemas without throwing', async () => {
+      await expect(
+        merge(schema07({ minLength: 1 }), schema07({ minLength: 5 }))
+      ).resolves.toBeDefined()
+    })
+
+    it('should accept Draft 2019-09 schemas without throwing', async () => {
+      await expect(
+        merge(schema2019({ required: ['id'] }), schema2019({ required: ['name'] }))
+      ).resolves.toBeDefined()
+    })
+
+    it('should reject schemas containing unevaluatedProperties (2020-12)', async () => {
       await expect(
         merge(schema(), schema({ unevaluatedProperties: false }))
+      ).rejects.toBeInstanceOf(UnsupportedKeywordError)
+    })
+
+    it('should reject schemas containing unevaluatedProperties (2019-09)', async () => {
+      await expect(
+        merge(schema2019(), schema2019({ unevaluatedProperties: false }))
+      ).rejects.toBeInstanceOf(UnsupportedKeywordError)
+    })
+
+    it('should reject schemas containing $recursiveRef (2019-09)', async () => {
+      await expect(
+        merge(schema2019(), schema2019({ $recursiveRef: '#' }))
       ).rejects.toBeInstanceOf(UnsupportedKeywordError)
     })
 
@@ -63,6 +104,12 @@ describe('merge()', () => {
       await expect(
         merge(schema(), schema({ not: { type: 'string' } }))
       ).rejects.toBeInstanceOf(UnsupportedKeywordError)
+    })
+
+    it('should expose all supported drafts via SUPPORTED_DRAFTS', () => {
+      expect(SUPPORTED_DRAFTS.has(SUPPORTED_DRAFT)).toBe(true)
+      expect(SUPPORTED_DRAFTS.has(DRAFT_07)).toBe(true)
+      expect(SUPPORTED_DRAFTS.has(DRAFT_2019)).toBe(true)
     })
   })
 
@@ -199,7 +246,7 @@ describe('merge()', () => {
     })
   })
 
-  describe('$defs', () => {
+  describe('$defs (2020-12 / 2019-09)', () => {
     it('should merge $defs by child key', async () => {
       const result = await merge(
         schema({ $defs: { Foo: { type: 'string' } } }),
@@ -218,6 +265,44 @@ describe('merge()', () => {
       )
       const defs = result['$defs'] as Record<string, unknown>
       expect((defs['Foo'] as Record<string, unknown>)['type']).toEqual(['string', 'number'])
+    })
+  })
+
+  describe('definitions (Draft 7)', () => {
+    it('should merge definitions by child key', async () => {
+      const result = await merge(
+        schema07({ definitions: { Foo: { type: 'string' } } }),
+        schema07({ definitions: { Bar: { type: 'number' } } })
+      )
+      expect(result['definitions']).toEqual({
+        Foo: { type: 'string' },
+        Bar: { type: 'number' },
+      })
+    })
+
+    it('should recursively merge overlapping definitions entries', async () => {
+      const result = await merge(
+        schema07({ definitions: { Id: { type: 'string', minLength: 1 } } }),
+        schema07({ definitions: { Id: { type: 'string', minLength: 5 } } })
+      )
+      const defs = result['definitions'] as Record<string, Record<string, unknown>>
+      expect(defs['Id']['minLength']).toBe(5)
+    })
+
+    it('should inline a local $ref from definitions before merging (Draft 7)', async () => {
+      const result = await merge(
+        schema07({
+          definitions: { UserId: { type: 'string', minLength: 1 } },
+          properties:  { id: { $ref: '#/definitions/UserId' } },
+        }),
+        schema07({
+          properties: { name: { type: 'string' } },
+        })
+      )
+      const props = result['properties'] as Record<string, Record<string, unknown>>
+      expect(props['id']['type']).toBe('string')
+      expect(props['id']['minLength']).toBe(1)
+      expect(props['name']).toEqual({ type: 'string' })
     })
   })
 
@@ -385,6 +470,122 @@ describe('merge()', () => {
     })
   })
 
+  describe('Draft 7', () => {
+    it('should merge required arrays across two Draft 7 schemas', async () => {
+      const result = await merge(
+        schema07({ required: ['id', 'email'] }),
+        schema07({ required: ['email', 'name'] })
+      )
+      expect(result['required']).toEqual(['id', 'email', 'name'])
+    })
+
+    it('should apply stricter numeric bounds in Draft 7', async () => {
+      const result = await merge(
+        schema07({ minimum: 0, maximum: 100 }),
+        schema07({ minimum: 5, maximum: 50 })
+      )
+      expect(result['minimum']).toBe(5)
+      expect(result['maximum']).toBe(50)
+    })
+
+    it('should merge properties across two Draft 7 schemas', async () => {
+      const result = await merge(
+        schema07({ properties: { id: { type: 'string' } } }),
+        schema07({ properties: { name: { type: 'string' } } })
+      )
+      const props = result['properties'] as Record<string, unknown>
+      expect(props).toHaveProperty('id')
+      expect(props).toHaveProperty('name')
+    })
+
+    it('should merge definitions and resolve $ref in Draft 7', async () => {
+      const result = await merge(
+        schema07({
+          definitions: { Token: { type: 'string', minLength: 8 } },
+          properties:  { token: { $ref: '#/definitions/Token' } },
+        }),
+        schema07({
+          properties: { token: { maxLength: 64 } },
+        })
+      )
+      const token = (result['properties'] as Record<string, Record<string, unknown>>)['token']
+      expect(token['minLength']).toBe(8)
+      expect(token['maxLength']).toBe(64)
+    })
+
+    it('should union enum arrays in Draft 7', async () => {
+      const result = await merge(
+        schema07({ enum: ['read', 'write'] }),
+        schema07({ enum: ['write', 'admin'] })
+      )
+      expect(result['enum']).toEqual(['read', 'write', 'admin'])
+    })
+
+    it('should fold three Draft 7 schemas accumulating all constraints', async () => {
+      const result = await merge(
+        schema07({ required: ['a'], minProperties: 1 }),
+        schema07({ required: ['b'], minProperties: 2 }),
+        schema07({ required: ['c'], maxProperties: 10 })
+      )
+      expect(result['required']).toEqual(['a', 'b', 'c'])
+      expect(result['minProperties']).toBe(2)
+      expect(result['maxProperties']).toBe(10)
+    })
+  })
+
+  describe('Draft 2019-09', () => {
+    it('should merge required arrays across two 2019-09 schemas', async () => {
+      const result = await merge(
+        schema2019({ required: ['id', 'createdAt'] }),
+        schema2019({ required: ['createdAt', 'updatedAt'] })
+      )
+      expect(result['required']).toEqual(['id', 'createdAt', 'updatedAt'])
+    })
+
+    it('should apply stricter numeric bounds in 2019-09', async () => {
+      const result = await merge(
+        schema2019({ minLength: 1, maxLength: 255 }),
+        schema2019({ minLength: 3, maxLength: 128 })
+      )
+      expect(result['minLength']).toBe(3)
+      expect(result['maxLength']).toBe(128)
+    })
+
+    it('should merge $defs in 2019-09', async () => {
+      const result = await merge(
+        schema2019({ $defs: { Foo: { type: 'string' } } }),
+        schema2019({ $defs: { Bar: { type: 'number' } } })
+      )
+      expect(result['$defs']).toEqual({
+        Foo: { type: 'string' },
+        Bar: { type: 'number' },
+      })
+    })
+
+    it('should inline a local $ref from $defs in 2019-09', async () => {
+      const result = await merge(
+        schema2019({
+          $defs: { Status: { type: 'string', enum: ['active', 'inactive'] } },
+          properties: { status: { $ref: '#/$defs/Status' } },
+        }),
+        schema2019({
+          properties: { status: { enum: ['active', 'inactive', 'pending'] } },
+        })
+      )
+      const status = (result['properties'] as Record<string, Record<string, unknown>>)['status']
+      expect(status['type']).toBeDefined()
+      const enumValues = status['enum'] as string[]
+      expect(enumValues).toContain('active')
+      expect(enumValues).toContain('pending')
+    })
+
+    it('should reject $recursiveRef in 2019-09', async () => {
+      await expect(
+        merge(schema2019(), schema2019({ $recursiveRef: '#' }))
+      ).rejects.toBeInstanceOf(UnsupportedKeywordError)
+    })
+  })
+
   describe('integration', () => {
     it('should merge two realistic user schemas end-to-end', async () => {
       const base = schema({
@@ -539,6 +740,52 @@ describe('merge()', () => {
       const props = result['properties'] as Record<string, unknown>
       expect(props).toHaveProperty('role')
       expect(props).toHaveProperty('id')
+    })
+
+    it('should merge a Draft 7 schema with definitions end-to-end', async () => {
+      const base = schema07({
+        title: 'Event base',
+        required: ['id', 'type'],
+        definitions: {
+          EventType: { type: 'string', enum: ['click', 'hover'] },
+          Timestamp: { type: 'string', format: 'date-time', minLength: 20 },
+        },
+        properties: {
+          id:        { type: 'string', minLength: 1 },
+          type:      { $ref: '#/definitions/EventType' },
+          createdAt: { $ref: '#/definitions/Timestamp' },
+        },
+      })
+
+      const extension = schema07({
+        title: 'Event extended',
+        required: ['id', 'userId'],
+        definitions: {
+          EventType: { type: 'string', enum: ['click', 'hover', 'focus'] },
+          Timestamp: { type: 'string', format: 'date-time', minLength: 24 },
+        },
+        properties: {
+          userId:    { type: 'string', minLength: 8 },
+          updatedAt: { $ref: '#/definitions/Timestamp' },
+        },
+      })
+
+      const result = await merge(base, extension)
+
+      expect(result['title']).toBe('Event extended')
+      expect(result['required']).toEqual(['id', 'type', 'userId'])
+
+      const defs = result['definitions'] as Record<string, Record<string, unknown>>
+      const eventTypeEnum = defs['EventType']['enum'] as string[]
+      expect(eventTypeEnum).toContain('click')
+      expect(eventTypeEnum).toContain('hover')
+      expect(eventTypeEnum).toContain('focus')
+      expect(defs['Timestamp']['minLength']).toBe(24)
+
+      const props = result['properties'] as Record<string, Record<string, unknown>>
+      expect(props['type']['type']).toBe('string')
+      expect(props['createdAt']['format']).toBe('date-time')
+      expect(props['userId']['minLength']).toBe(8)
     })
   })
 })
