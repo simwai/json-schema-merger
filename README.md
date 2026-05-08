@@ -125,8 +125,9 @@ src/
 ├── if-then-else.ts   — liftIfThenElse() pre-merge pass
 ├── preflight.ts      — runPreflight() — draft + unsupported keyword checks
 ├── merger.ts         — mergeSchemas(), mergeByStrategy(), mergeChildSchemas()
-├── strategy.ts       — getStrategy(), _strategyOverrides map
+├── strategy.ts       — getStrategy(), keyword lists (single source of truth)
 ├── meta-schema.ts    — getKeywordMap(), seedKeywordMap(), shape classifiers
+├── validator.ts      — validateMerged(), assertMerged(), compileMergedValidator()
 └── __fixtures__/
     └── draft-2020-12-keywords.json  — generated from live meta-schema
 ```
@@ -205,6 +206,95 @@ const result = await merge(
 )
 ```
 
+## Runtime validation
+
+`merge()` returns `Promise<Schema>` — a plain `Record<string, JsonValue>`. Because
+the input schemas are dynamic, TypeScript cannot infer the merged shape at
+compile time. The validator module bridges this gap at runtime using
+[TypeBox](https://github.com/sinclairzx81/typebox): it narrows the result to
+`MergedSchema` after checking that every field matches its expected type.
+
+The `MergedSchemaShape` TypeBox definition is derived directly from the keyword
+lists in `strategy.ts` — there is no separate keyword registry to keep in sync.
+
+### `validateMerged` — type guard
+
+Returns `true` and narrows the type on success; returns `false` without throwing
+on failure. Use when you want to branch on the result:
+
+```ts
+import { merge, validateMerged } from 'json-schema-merger'
+
+const result = await merge(a, b)
+
+if (validateMerged(result)) {
+  // result is MergedSchema here
+  result.required    // string[] | undefined ✅
+  result.properties  // Record<string, ...> | undefined ✅
+  result.minLength   // number | undefined ✅
+}
+```
+
+### `assertMerged` — throwing assert
+
+Narrows with `asserts schema is MergedSchema`. Throws a descriptive `TypeError`
+listing every failing path if validation fails. Use on trusted paths where a
+shape mismatch is a programming error:
+
+```ts
+import { merge, assertMerged } from 'json-schema-merger'
+
+const result = await merge(a, b)
+assertMerged(result)     // throws TypeError with full error paths if invalid
+
+result.required          // string[] | undefined ✅  (narrowed from here down)
+```
+
+Example error output:
+
+```
+TypeError: Merged schema validation failed:
+  /required/0: Expected string
+  /minLength: Expected number
+```
+
+### `compileMergedValidator` — custom shape
+
+Pre-compiles any TypeBox `TObject` into a reusable type guard. Use when you need
+a stricter or domain-specific shape beyond `MergedSchema`:
+
+```ts
+import { Type } from '@sinclair/typebox'
+import { merge, compileMergedValidator } from 'json-schema-merger'
+
+const checkUserSchema = compileMergedValidator(
+  Type.Object({
+    required:   Type.Array(Type.String()),
+    properties: Type.Record(Type.String(), Type.Unknown()),
+  })
+)
+
+const result = await merge(a, b)
+
+if (checkUserSchema(result)) {
+  result.required    // string[] ✅  (non-optional — guaranteed by your shape)
+}
+```
+
+### `MergedSchemaShape` — extend or inspect
+
+The compiled TypeBox schema is exported so you can build on top of it:
+
+```ts
+import { Type } from '@sinclair/typebox'
+import { MergedSchemaShape } from 'json-schema-merger'
+
+const StrictUserSchema = Type.Intersect([
+  MergedSchemaShape,
+  Type.Object({ required: Type.Array(Type.String()) }),
+])
+```
+
 ## API
 
 ```ts
@@ -212,6 +302,24 @@ merge(...schemas: [Schema, Schema, ...Schema[]]): Promise<Schema>
 ```
 
 Accepts two or more schemas. Folds left-to-right. All schemas must share the same `$schema` draft URI.
+
+```ts
+validateMerged(schema: Schema): schema is MergedSchema
+```
+
+Type guard. Returns `true` and narrows to `MergedSchema` on success, `false` otherwise.
+
+```ts
+assertMerged(schema: Schema): asserts schema is MergedSchema
+```
+
+Assert variant. Throws `TypeError` with structured error paths on failure.
+
+```ts
+compileMergedValidator<T extends TObject>(shape: T): (schema: Schema) => schema is Static<T>
+```
+
+Pre-compiles a custom TypeBox shape into a reusable type guard.
 
 ```ts
 seedKeywordMap(draftUri: string, map: Map<string, KeywordShape>): void
@@ -263,4 +371,5 @@ pnpm test
 - [x] `if`/`then`/`else` — wrap both sides in `allOf` instead of merging
 - [x] Multi-draft support — Draft 7, Draft 2019-09, Draft 2020-12
 - [x] Automated releases via semantic-release + commitlint
+- [x] Runtime validation via TypeBox (`validateMerged`, `assertMerged`)
 - [ ] `unevaluatedProperties` tracking
